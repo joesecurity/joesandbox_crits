@@ -11,11 +11,15 @@ multiple samples.
 
 ## Installation
 
-(A more general description is available on the [CRITs github page](https://github.com/crits/crits/wiki/Adding-services-to-CRITs))
+A more general description is available on the [CRITs github page][guide-adding-services].
 
-1. Clone this repository into `/data/joesandbox_crits`
-2. Add this folder to your CRITs services.
-3. run `bootstrap.sh` to install the dependencies.
-4. Configure the service in the CRITs web interface.
+This guide assumes you installed the [CRITs services repository] in `/data/crits_services`.
+
+1. Clone this repository into `/data/crits_services/joesandbox_crits`
+2. Run `cd /data/crits_services && ./bootstrap` to install all dependencies.
+3. Configure the service in the CRITs web interface.
 
 ![Joe Sandbox service button](img/service.png)
+
+
+ [guide-adding-services]: https://github.com/crits/crits/wiki/Adding-services-to-CRITs

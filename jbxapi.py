@@ -487,6 +487,9 @@ class joe_api:
         # dance with the API.
         response = self.__API("analysis/download", params)
 
+        if response.status_code != requests.codes.ok:
+            return None
+
         # if resource is JSON, convert to container and return the head reference "analysis".
         if resource.find("json") != -1:
             try:

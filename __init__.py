@@ -196,14 +196,23 @@ class JoeSandboxService(Service):
         pcap = self.joe.report(webid, resource="pcapslim", run=run) 
         dropped_binaries = self.joe.report(webid, resource="bins", run=run) 
 
-        self.process_sandbox_infos(incident_report, html_report)
-        self.process_detection(incident_report)
-        self.process_signatures(incident_report)
-        self.process_dropped_binaries(dropped_binaries, incident_report)
-        self.process_screenshots(screenshots)
-        self.process_domains(incident_report)
-        self.process_ips(incident_report)
-        self.process_pcap(pcap)
+        if incident_report and html_report:
+            self.process_sandbox_infos(incident_report, html_report)
+
+        if incident_report:
+            self.process_detection(incident_report)
+            self.process_signatures(incident_report)
+            self.process_domains(incident_report)
+            self.process_ips(incident_report)
+
+        if incident_report and dropped_binaries:
+            self.process_dropped_binaries(dropped_binaries, incident_report)
+
+        if screenshots:
+            self.process_screenshots(screenshots)
+
+        if pcap:
+            self.process_pcap(pcap)
 
     def process_detection(self, incident_report):
         detection = "malicious" if incident_report.find("./detection/malicious").text == "true" else \

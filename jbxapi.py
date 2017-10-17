@@ -12,6 +12,7 @@ import time
 import random
 import getpass
 import datetime
+import re
 
 try:
     import argparse
@@ -49,15 +50,25 @@ class joe_api:
     """
 
     ####################################################################################################################
-    def __init__ (self, apikey, verify_ssl=True, apiurl=API_URL, tandc=JOE_TAC):
+    def __init__ (self, apikey, verify_ssl=True, apiurl=API_URL, tandc=JOE_TAC, proxy=None):
         """
         Initialize the interface to Joe Sandbox API with apikey.
         """
 
-        self.apikey    = apikey
+        if proxy and not re.match("https?://.+", proxy):
+            sys.exit("Invalid proxy URL.")
+
+        self.apikey = apikey
         self.apiurl = apiurl
         self.verify_ssl = verify_ssl
         self.tandc = tandc
+        if proxy:
+            self.proxies = {
+                "http": proxy,
+                "https": proxy,
+            }
+        else:
+            self.proxies = None
 
 
     ####################################################################################################################
@@ -93,7 +104,7 @@ class joe_api:
         # make up to three attempts to dance with the API, use a jittered exponential back-off delay
         for i in xrange(3):
             try:
-                return requests.post(self.apiurl + api, data=params, files=files, verify=self.verify_ssl)
+                return requests.post(self.apiurl + api, data=params, files=files, verify=self.verify_ssl, proxies=self.proxies, timeout=60)
 
             # 0.4, 1.6, 6.4, 25.6, ...
             except:

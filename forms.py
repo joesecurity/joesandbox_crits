@@ -15,13 +15,19 @@ class JoeSandboxConfigForm(forms.Form):
                                initial=False,
                                help_text="https://jbxcloud.joesecurity.org/download/termsandconditions.pdf")
 
+    ignore_ssl_cert = forms.BooleanField(required=False,
+                                         label="Disable SSL Verification",
+                                         help_text="Do not verify the SSL certificate of the Joe Sandbox server.",
+                                         initial=False)
+
+    use_proxy = forms.BooleanField(required=False,
+                                   initial=False,
+                                   label="Use CRITs proxy",
+                                   help_text="Use the proxy specified in the CRITs settings for connecting to the Joe Sandbox server.")
+
     timeout = forms.IntegerField(label="Analysis Timeout (minutes)",
                                  initial=60,
                                  help_text="Combined maximum time to wait for the queue and analyses.")
-
-    ignore_ssl_cert = forms.BooleanField(required=False,
-                                         label="Do not verify SSL certificate of the api host",
-                                         initial=False)
 
     systems = forms.CharField(required=False,
                               label="Analysis Systems (comma separated)",

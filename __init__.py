@@ -6,6 +6,7 @@ import ipaddress
 import xml.etree.ElementTree as ElementTree
 
 from django.template.loader import render_to_string
+from django.conf import settings
 
 from crits.services.core import Service, ServiceConfigError
 
@@ -131,12 +132,18 @@ class JoeSandboxService(Service):
         self.obj = obj
         self.config = config
 
+        if config["use_proxy"]:
+            proxy = settings.HTTP_PROXY
+        else:
+            proxy = None
+
         # initialize api
         self.joe = jbxapi.joe_api(
             config["api_key"],
             apiurl=config["api_url"],
             verify_ssl=not config["ignore_ssl_cert"],
-            tandc=config["tandc"]
+            tandc=config["tandc"],
+            proxy=proxy,
         )
 
         f = _NamedFile(obj.filedata, obj.filename)

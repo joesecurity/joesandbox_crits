@@ -36,7 +36,7 @@ class _NamedFile(object):
 
 class JoeSandboxService(Service):
     name = 'Joe Sandbox'
-    version = '1.0.0'
+    version = '1.0.1'
     supported_types = ['Sample']
     description = ("Analyze a sample using Joe Sandbox.")
 

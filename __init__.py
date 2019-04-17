@@ -24,7 +24,7 @@ from crits.vocabulary.ips import IPTypes
 from crits.core.user_tools import get_user_organization
 
 from . import forms
-from . import jbxapi
+import jbxapi
 
 class _NamedFile(object):
     def __init__(self, f, name):
@@ -34,9 +34,10 @@ class _NamedFile(object):
     def read(self, *args, **kwargs): return self.f.read(*args, **kwargs)
     def seek(self, *args, **kwargs): return self.f.seek(*args, **kwargs)
 
+
 class JoeSandboxService(Service):
     name = 'Joe Sandbox'
-    version = '1.0.1'
+    version = '1.1.0'
     supported_types = ['Sample']
     description = ("Analyze a sample using Joe Sandbox.")
 
@@ -138,90 +139,112 @@ class JoeSandboxService(Service):
             proxy = None
 
         # initialize api
-        self.joe = jbxapi.joe_api(
-            config["api_key"],
+        self.joe = jbxapi.JoeSandbox(
+            apikey=config["api_key"],
             apiurl=config["api_url"],
             verify_ssl=not config["ignore_ssl_cert"],
-            tandc=config["tandc"],
-            proxy=proxy,
+            accept_tac=config["tandc"],
+            proxies={
+                "http": proxy,
+                "https": proxy,
+            }
         )
 
         f = _NamedFile(obj.filedata, obj.filename)
-        response = self.joe.analyze(f, '',
-            cache_sha256=config["use_cache"],
-            systems=config["systems"],
-            inet=config["inet"],
-            ssl=config["ssl"],
-            comments="Uploaded by CRITs"
-        )
+        systems = [s.strip() for s in config["systems"].split(",") if s.strip()]
+        response = self.joe.submit_sample(f, params={
+            "report-cache": config["use_cache"],
+            "systems": systems,
+            "internet-access": config["inet"],
+            "ssl-inspection": config["ssl"],
+            "comments": "Uploaded by CRITs"
+        })
 
         self._debug("Submitting task")
         try:
-            webids = response["webids"]
-        except TypeError:
-            # no webid received
-            self._critical(response)
+            submission_id = response["submission_id"]
+        except Exception as e:
+            self._critical(e.message)
             return
-        else:
-            self._info("Submitted tasks with webid(s) {}".format(", ".join(str(webid) for webid in webids)))
+
+        self._info("Submitted sample with id {}".format(submission_id))
 
         self._notify()
 
-        # grab first webid
-        webid = webids.pop(0)
-
         # poll quickly and then once every minute
+        # until the submission is finished
+
+        webids = None
         delays = [10, 20, 30] + (config["timeout"] - 1) * [60]
         for delay in delays:
             time.sleep(delay)
-            response = self.joe.status(webid)
-
             try:
-                status = response["status"]
-            except TypeError:
-                self._warning("Invalid response: " + str(response))
-                continue
+                response = self.joe.submission_info(submission_id)
+            except Exception as e:
+                self._error(e.message)
+                return
 
+            status = response["status"]
             self._info("status: {}".format(status))
             self._notify()
 
             if status == "finished":
-                self.process_data(webid)
-                try:
-                    webid = webids.pop(0)
-                except IndexError:
-                    break
-        else:
+                webids = [a["webid"] for a in response["analyses"]]
+                sample_names = [a["filename"] for a in response["analyses"]]
+                break
+
+        if webids is None:
             self._error("Timed out waiting for results.")
+            return
 
-    def process_data(self, webid):
-        run = self._most_interesting_run(webid)
+        self.process_data(sample_names, webids)
 
-        html_report = self.joe.report(webid, resource="html", run=run) 
-        screenshots = self.joe.report(webid, resource="shoots", run=run) 
-        incident_report = ElementTree.fromstring(self.joe.report(webid, resource="irxml", run=run)) 
-        pcap = self.joe.report(webid, resource="pcapslim", run=run) 
-        dropped_binaries = self.joe.report(webid, resource="bins", run=run) 
+    def process_data(self, sample_names, webids):
+        assert(len(sample_names) == len(webids))
 
-        if incident_report and html_report:
-            self.process_sandbox_infos(incident_report, html_report)
+        def download(webid, type):
+            try:
+                (_, report) = self.joe.analysis_download(webid, type)
+                return report
+            except jbxapi.ApiError:
+                return None
 
-        if incident_report:
-            self.process_detection(incident_report)
-            self.process_signatures(incident_report)
-            self.process_domains(incident_report)
-            self.process_ips(incident_report)
+        # download everything
+        html_reports = [download(webid, "html") for webid in webids]
+        screenshot_collections = [download(webid, "shoots") for webid in webids]
+        pcaps = [download(webid, "pcapslim") for webid in webids]
+        dropped_collections = [download(webid, "bins") for webid in webids]
+        irxml = [download(webid, "irxml") for webid in webids]
 
-        if incident_report and dropped_binaries:
-            self.process_dropped_binaries(dropped_binaries, incident_report)
+        # parse irxml
+        incident_reports = [ElementTree.fromstring(xml) if xml else None for xml in irxml]
 
-        if screenshots:
-            self.process_screenshots(screenshots)
+        # add general info and HTML report
+        for sample_name, incident_report, html_report in zip(sample_names, incident_reports, html_reports):
+            if incident_report and html_report:
+                self.process_sandbox_infos(sample_name, incident_report, html_report)
 
-        if pcap:
-            self.process_pcap(pcap)
+        # add information from incident report
+        for sample_name, incident_report in zip(sample_names, incident_reports):
+            if incident_report:
+                self.process_detection(sample_name, incident_report)
+                self.process_signatures(sample_name, incident_report)
+                self.process_domains(sample_name, incident_report)
+                self.process_ips(sample_name, incident_report)
 
-    def process_detection(self, incident_report):
+        for sample_name, incident_report, dropped_binaries in zip(sample_names, incident_reports, dropped_collections):
+            if incident_report and dropped_binaries:
+                self.process_dropped_binaries(sample_name, dropped_binaries, incident_report)
+
+        for sample_name, screenshots in zip(sample_names, screenshot_collections):
+            if screenshots:
+                self.process_screenshots(sample_name, screenshots)
+
+        for sample_name, pcap in zip(sample_names, pcaps):
+            if pcap:
+                self.process_pcap(sample_name, pcap)
+
+    def process_detection(self, sample_name, incident_report):
         detection = "malicious" if incident_report.find("./detection/malicious").text == "true" else \
                     "suspicious" if incident_report.find("./detection/suspicious").text == "true" else \
                     "clean" if incident_report.find("./detection/clean").text == "true" else \
@@ -238,19 +261,21 @@ class JoeSandboxService(Service):
         )
 
         self._add_result("Joe Sandbox Detection", detection, {
+            "Sample": sample_name,
             "score": score,
             "confidence": confidence,
         })
 
         self._notify()
 
-    def process_sandbox_infos(self, incident_report, html_report):
+    def process_sandbox_infos(self, sample_name, incident_report, html_report):
         errors = [e.text for e in incident_report.findall("./errors/error")]
 
         for error in errors:
             self._error(error)
 
         info = {
+            "Sample": sample_name,
             "Report Id": incident_report.find("./id").text,
             "Joe Sandbox Version": incident_report.find("./version").text,
             "Architecture": incident_report.find("./arch").text,
@@ -275,11 +300,12 @@ class JoeSandboxService(Service):
             info["md5"] = md5
         else:
             self._warning(ret["message"])
+            info["md5"] = ""
 
         self._add_result("Joe Sandbox Infos", "Report", info)
         self._notify()
 
-    def process_dropped_binaries(self, dropped_binaries, incident_report):
+    def process_dropped_binaries(self, sample_name, dropped_binaries, incident_report):
         archive = zipfile.ZipFile(io.BytesIO(dropped_binaries))
         archive.setpassword("infected")
         names = archive.namelist()
@@ -302,6 +328,7 @@ class JoeSandboxService(Service):
 
                 for report_file in files_in_report:
                     data = {
+                        'Sample': sample_name,
                         'md5': md5,
                         'malicious': getattr(report_file.find('malicious'), 'text', 'unknown'),
                     }
@@ -313,7 +340,7 @@ class JoeSandboxService(Service):
 
         self._notify()
 
-    def process_screenshots(self, screenshots):
+    def process_screenshots(self, sample_name, screenshots):
         archive = zipfile.ZipFile(io.BytesIO(screenshots))
         names = archive.namelist()
 
@@ -334,13 +361,13 @@ class JoeSandboxService(Service):
 
             if ret['success']:
                 md5 = hashlib.md5(screenshot).hexdigest()
-                self._add_result("Screenshots", "Screenshot", {'md5': md5})
+                self._add_result("Screenshots", "Screenshot", {'Sample': sample_name, 'md5': md5})
             else:
                 self._warning(ret["message"])
 
         self._notify()
 
-    def process_domains(self, incident_report):
+    def process_domains(self, sample_name, incident_report):
         domains = incident_report.findall("./contacted/domains/domain")
 
         for domain in domains:
@@ -353,13 +380,13 @@ class JoeSandboxService(Service):
 
             if ret['success']:
                 malicious = domain.get('malicious', 'unknown')
-                self._add_result("Domains", domain.text, {'malicious': malicious})
+                self._add_result("Domains", domain.text, {'Sample': sample_name, 'malicious': malicious})
             else:
                 self._warning(ret["message"])
 
         self._notify()
 
-    def process_ips(self, incident_report):
+    def process_ips(self, sample_name, incident_report):
         ips = incident_report.findall("./contacted/ips/ip")
         for ip in ips:
             ret = ip_add_update(ip.text, self._ip_type(ip.text),
@@ -373,13 +400,13 @@ class JoeSandboxService(Service):
 
             if ret['success']:
                 malicious = ip.get('malicious', 'unknown')
-                self._add_result("IPs", ip.text, {'malicious': malicious})
+                self._add_result("IPs", ip.text, {'Sample': sample_name, 'malicious': malicious})
             else:
                 self._warning(ret["message"])
 
         self._notify()
 
-    def process_pcap(self, pcap):
+    def process_pcap(self, sample_name, pcap):
         md5 = hashlib.md5(pcap).hexdigest()
 
         filename = "{}.pcap".format(self.obj.filename)
@@ -396,14 +423,14 @@ class JoeSandboxService(Service):
                                related_id=str(self.obj.id),
                                related_type=self.obj._meta['crits_type'])
 
-        self._add_result("PCAPs", filename, {'md5': md5})
+        self._add_result("PCAPs", filename, {'Sample': sample_name, 'md5': md5})
 
         self._notify()
 
-    def process_signatures(self, incident_report):
+    def process_signatures(self, sample_name, incident_report):
         signatures = incident_report.findall("./signatures/signare") # typo is present in the report
         for sig in signatures:
-            self._add_result("Important Signatures", sig.text)
+            self._add_result("Important Signatures", sig.text, {"Sample": sample_name})
 
         self._notify()
 
@@ -417,12 +444,3 @@ class JoeSandboxService(Service):
             return IPTypes.IPV6_ADDRESS
         else:
             raise ValueError("Unkown IP version: {}".format(ip.version))
-
-    def _most_interesting_run(self, webid):
-        status_dict = self.joe.status(webid)
-        run_count = status_dict["runnames"].count(";")
-
-        reports = [self.joe.report(webid, resource="irjsonfixed", run=i) for i in range(run_count)]
-
-        index_max_score, _ = max(enumerate(reports), key=lambda pair: pair[1]["analysis"]["detection"]["score"])
-        return index_max_score

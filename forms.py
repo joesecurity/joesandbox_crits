@@ -32,7 +32,7 @@ class JoeSandboxConfigForm(forms.Form):
     systems = forms.CharField(required=False,
                               label="Analysis Systems (comma separated)",
                               initial="",
-                              help_text="Leave empty for automatic Windows selection.")
+                              help_text="Leave empty for automatic selection.")
 
     use_cache = forms.BooleanField(required=False,
                                    label="Check Cache",
@@ -41,7 +41,7 @@ class JoeSandboxConfigForm(forms.Form):
 
     inet = forms.BooleanField(required=False,
                               label="Internet Access",
-                              help_text="Windows only",
+                              help_text="Enable Internet access",
                               initial=True)
 
     ssl = forms.BooleanField(required=False,
